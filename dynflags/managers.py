@@ -7,21 +7,29 @@ import boto3, logging
 
 from .exceptions import *
 
-DEFAULT_TABLE_SPEC = {
-        "BillingMode": 'PAY_PER_REQUEST'
-    }
+DEFAULT_TABLE_SPEC = {"BillingMode": 'PAY_PER_REQUEST'}
+
 
 def write_only(func):
     def block_read_only(self, *args, **kwargs):
         if self._read_only:
             raise ReadOnlyException()
         return func(self, *args, **kwargs)
+
     return block_read_only
 
+
 class DynFlagManager:
-    def __init__(
-            self, table_name, boto_config={ 'region_name': 'us-east-1' }, table_config=None, cache=None,
-            autocreate_table=False, read_only=True, consistent_reads=False, logger=None, robust=False):
+    def __init__(self,
+                 table_name,
+                 boto_config={'region_name': 'us-east-1'},
+                 table_config=None,
+                 cache=None,
+                 autocreate_table=False,
+                 read_only=True,
+                 consistent_reads=False,
+                 logger=None,
+                 robust=False):
         self._table_name = table_name
         self._autocreate_table = autocreate_table
         self._boto_config = boto_config
@@ -36,49 +44,51 @@ class DynFlagManager:
 
     def _initialize_table(self):
         # create the table
-        self._logger.debug('Creating DynamoDB Table: %s, %s' % (self._table_name, self._table_config))
-        table = self.dynamo.create_table(
-                TableName=self._table_name,
-                KeySchema=[
-                    {
-                        "AttributeName": "arguments",
-                        "KeyType": "HASH"
-                    }
-                ],
-                AttributeDefinitions=[
-                    {
-                        "AttributeName": "arguments",
-                        "AttributeType": "S"
-                    },
-                    {
-                        "AttributeName": "active_flags",
-                        "AttributeType": "S"
-                    }
-                ],
-                GlobalSecondaryIndexes=[
-                    {
-                        'IndexName': 'active_flags',
-                        'KeySchema': [
-                            { 'AttributeName': 'active_flags',
-                            'KeyType': 'HASH' }
-                        ],
-                        'Projection': {
-                            'ProjectionType': 'ALL',
-                        }
-                    }
-                ],
-                **self._table_config)
-        table.meta.client.get_waiter('table_exists').wait(TableName=self._table_name)
+        self._logger.debug('Creating DynamoDB Table: %s, %s' %
+                           (self._table_name, self._table_config))
+        table = self.dynamo.create_table(TableName=self._table_name,
+                                         KeySchema=[{
+                                             "AttributeName": "arguments",
+                                             "KeyType": "HASH"
+                                         }],
+                                         AttributeDefinitions=[{
+                                             "AttributeName":
+                                             "arguments",
+                                             "AttributeType":
+                                             "S"
+                                         }, {
+                                             "AttributeName":
+                                             "active_flags",
+                                             "AttributeType":
+                                             "S"
+                                         }],
+                                         GlobalSecondaryIndexes=[{
+                                             'IndexName':
+                                             'active_flags',
+                                             'KeySchema': [{
+                                                 'AttributeName':
+                                                 'active_flags',
+                                                 'KeyType': 'HASH'
+                                             }],
+                                             'Projection': {
+                                                 'ProjectionType': 'ALL',
+                                             }
+                                         }],
+                                         **self._table_config)
+        table.meta.client.get_waiter('table_exists').wait(
+            TableName=self._table_name)
         self._logger.debug('DynamoDB Table Created')
 
     def _gen_dynamo_key_from_key(self, key):
-        return { "arguments": key }
+        return {"arguments": key}
 
     def _validate_arguments(self, arguments):
         if not all(isinstance(x, string_types) for x in arguments.keys()):
-            raise InvalidArgumentKeyTypeException('Argument keys must be strings')
+            raise InvalidArgumentKeyTypeException(
+                'Argument keys must be strings')
         if not all(isinstance(x, string_types) for x in arguments.values()):
-            raise InvalidArgumentValueTypeException('Argument values must be strings')
+            raise InvalidArgumentValueTypeException(
+                'Argument values must be strings')
 
     def _validate_flag_names(self, flags):
         if not all(isinstance(x, string_types) for x in flags):
@@ -88,10 +98,11 @@ class DynFlagManager:
         if not arguments: return '__global__'
         self._validate_arguments(arguments)
         arglist = list(arguments.items())
-        arglist.sort(key=lambda x:x[0])
+        arglist.sort(key=lambda x: x[0])
         key_fragments = ("%s=%s" % (x, str(y)) for x, y in arglist)
         key = ';'.join(key_fragments)
-        self._logger.debug('Generated key from args: %s, %s' % (arguments, key))
+        self._logger.debug('Generated key from args: %s, %s' %
+                           (arguments, key))
         return key
 
     def _gen_args_from_key(self, key):
@@ -102,13 +113,13 @@ class DynFlagManager:
         return args
 
     def _query_dynamodb_for_flags_for_key(self, key):
-        self._logger.debug('Querying DynamoDB for key: %s' % self._gen_dynamo_key_from_key(key))
-        item = self.table.get_item(
-                Key=self._gen_dynamo_key_from_key(key),
-                ConsistentRead=self._consistent_reads
-            )
+        self._logger.debug('Querying DynamoDB for key: %s' %
+                           self._gen_dynamo_key_from_key(key))
+        item = self.table.get_item(Key=self._gen_dynamo_key_from_key(key),
+                                   ConsistentRead=self._consistent_reads)
         active_flags = item.get('Item', {}).get('active_flags', set())
-        self._logger.debug('Found active flags for key: %s, %s' % (key, active_flags))
+        self._logger.debug('Found active flags for key: %s, %s' %
+                           (key, active_flags))
         return active_flags
 
     def get_flags_for_key(self, key, use_cache=True):
@@ -116,7 +127,8 @@ class DynFlagManager:
             self._logger.debug('Checking cache for key: %s' % key)
             cached_flags = self._cache.get(key)
             if cached_flags:
-                self._logger.debug('Returning cached flags for key: %s, %s' % (key, cached_flags))
+                self._logger.debug('Returning cached flags for key: %s, %s' %
+                                   (key, cached_flags))
                 return cached_flags
         flags = self._query_dynamodb_for_flags_for_key(key)
         if use_cache and self._cache:
@@ -168,29 +180,28 @@ class DynFlagManager:
     @write_only
     def _gen_attr_updates(self, flags, action):
         attr_updates = {
-                'active_flags': {
-                    "Value": set(flags),
-                    "Action": action
-                },
-                'version': {
-                    "Value": 1,
-                    "Action": "ADD"
-                },
-                'last_update_time': {
-                    "Value": datetime.utcnow().isoformat(),
-                    "Action": "PUT"
-                }
+            'active_flags': {
+                "Value": set(flags),
+                "Action": action
+            },
+            'version': {
+                "Value": 1,
+                "Action": "ADD"
+            },
+            'last_update_time': {
+                "Value": datetime.utcnow().isoformat(),
+                "Action": "PUT"
             }
+        }
         return attr_updates
 
     @write_only
     def _manipulate_flags(self, flagnames, arguments, action):
         self._validate_flag_names(flagnames)
         key = self._gen_key_from_args(arguments)
-        self.table.update_item(
-                Key=self._gen_dynamo_key_from_key(key),
-                AttributeUpdates=self._gen_attr_updates(flagnames, action)
-            )
+        self.table.update_item(Key=self._gen_dynamo_key_from_key(key),
+                               AttributeUpdates=self._gen_attr_updates(
+                                   flagnames, action))
 
     @write_only
     def add_flag(self, flagname, arguments={}):
