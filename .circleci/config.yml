@@ -36,5 +36,5 @@ jobs:
           name: run tests
           command: |
             . venv/bin/activate
-            coverage setup.py test
+            coverage run setup.py test
             coverage report
