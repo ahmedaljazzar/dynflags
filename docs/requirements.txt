@@ -1,2 +1,3 @@
 boto3
-moto
+-e git+https://github.com/zoidbb/moto#egg=moto
+coverage
