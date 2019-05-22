@@ -1,7 +1,9 @@
 from __future__ import print_function
+
+from datetime import datetime
 from six import string_types
 
-import boto3, datetime
+import boto3, logging
 
 from .exceptions import *
 
@@ -9,26 +11,33 @@ DEFAULT_TABLE_SPEC = {
         "BillingMode": 'PAY_PER_REQUEST'
     }
 
-class ReadOnlyFlagManager:
+def write_only(func):
+    def block_read_only(self, *args, **kwargs):
+        if self._read_only:
+            raise ReadOnlyException()
+        return func(self, *args, **kwargs)
+    return block_read_only
+
+class DynFlagManager:
     def __init__(
-            self, table_name, boto_config={ 'region_name': 'us-east-1' }, table_config=None, cache_manager=None,
-            autocreate_table=False):
-        self.table_name = table_name
+            self, table_name, boto_config={ 'region_name': 'us-east-1' }, table_config=None, cache=None,
+            autocreate_table=False, read_only=True, consistent_reads=False, logger=None):
+        self._table_name = table_name
         self._autocreate_table = autocreate_table
         self._boto_config = boto_config
         self._dynamo = None
         self._cached_table_obj = None
-        self._cache_manager = cache_manager
+        self._cache = cache
         self._table_config = table_config or DEFAULT_TABLE_SPEC.copy()
-
-    def log(self, text):
-        print(text)
+        self._read_only = read_only
+        self._consistent_reads = consistent_reads
+        self._logger = logger or logging.getLogger(__name__)
 
     def _initialize_table(self):
         # create the table
-        self.log('Creating DynamoDB Table: %s, %s' % (self.table_name, self._table_config))
+        self._logger.debug('Creating DynamoDB Table: %s, %s' % (self._table_name, self._table_config))
         table = self.dynamo.create_table(
-                TableName=self.table_name,
+                TableName=self._table_name,
                 KeySchema=[
                     {
                         "AttributeName": "arguments",
@@ -39,11 +48,27 @@ class ReadOnlyFlagManager:
                     {
                         "AttributeName": "arguments",
                         "AttributeType": "S"
+                    },
+                    {
+                        "AttributeName": "active_flags",
+                        "AttributeType": "S"
+                    }
+                ],
+                GlobalSecondaryIndexes=[
+                    {
+                        'IndexName': 'active_flags',
+                        'KeySchema': [
+                            { 'AttributeName': 'active_flags',
+                            'KeyType': 'HASH' }
+                        ],
+                        'Projection': {
+                            'ProjectionType': 'ALL',
+                        }
                     }
                 ],
                 **self._table_config)
-        table.meta.client.get_waiter('table_exists').wait(TableName=self.table_name)
-        self.log('DynamoDB Table Created')
+        table.meta.client.get_waiter('table_exists').wait(TableName=self._table_name)
+        self._logger.debug('DynamoDB Table Created')
 
     def _gen_dynamo_key_from_key(self, key):
         return { "arguments": key }
@@ -54,6 +79,10 @@ class ReadOnlyFlagManager:
         if not all(isinstance(x, string_types) for x in arguments.values()):
             raise InvalidArgumentValueTypeException('Argument values must be strings')
 
+    def _validate_flag_names(self, flags):
+        if not all(isinstance(x, string_types) for x in flags):
+            raise InvalidFlagNameTypeException('Flag names must be string')
+
     def _gen_key_from_args(self, arguments):
         if not arguments: return '__global__'
         self._validate_arguments(arguments)
@@ -61,7 +90,7 @@ class ReadOnlyFlagManager:
         arglist.sort(key=lambda x:x[0])
         key_fragments = ("%s=%s" % (x, str(y)) for x, y in arglist)
         key = ';'.join(key_fragments)
-        self.log('Generated key from args: %s, %s' % (arguments, key))
+        self._logger.debug('Generated key from args: %s, %s' % (arguments, key))
         return key
 
     def _gen_args_from_key(self, key):
@@ -72,26 +101,31 @@ class ReadOnlyFlagManager:
         return args
 
     def _query_dynamodb_for_flags_for_key(self, key):
-        self.log('Querying DynamoDB for key: %s' % self._gen_dynamo_key_from_key(key))
+        self._logger.debug('Querying DynamoDB for key: %s' % self._gen_dynamo_key_from_key(key))
         item = self.table.get_item(
-                Key=self._gen_dynamo_key_from_key(key)
+                Key=self._gen_dynamo_key_from_key(key),
+                ConsistentRead=self._consistent_reads
             )
         active_flags = item.get('Item', {}).get('active_flags', set())
-        self.log('Found active flags for key: %s, %s' % (key, active_flags))
+        self._logger.debug('Found active flags for key: %s, %s' % (key, active_flags))
         return active_flags
 
     def get_flags_for_key(self, key, use_cache=True):
-        if use_cache and self._cache_manager:
-            self.log('Checking cache for key: %s' % key)
-            cached_flags = self._cache_manager.get_cache_for_key(key)
+        if use_cache and self._cache:
+            self._logger.debug('Checking cache for key: %s' % key)
+            cached_flags = self._cache.get(key)
             if cached_flags:
-                self.log('Returning cached flags for key: %s, %s' % (key, cached_flags))
+                self._logger.debug('Returning cached flags for key: %s, %s' % (key, cached_flags))
                 return cached_flags
         flags = self._query_dynamodb_for_flags_for_key(key)
-        if use_cache and self._cache_manager:
-            self.log('Setting cache for key: %s, %s' % (key, flags))
-            self._cache_manager.set_cache_for_key(key, flags)
+        if use_cache and self._cache:
+            self._logger.debug('Setting cache for key: %s, %s' % (key, flags))
+            self._cache.set(key, flags)
         return flags
+
+    def get_flags_for_args(self, arguments, use_cache=True):
+        key = self._gen_key_from_args(arguments)
+        return self.get_flags_for_key(key, use_cache)
 
     @property
     def dynamo(self):
@@ -102,31 +136,24 @@ class ReadOnlyFlagManager:
     @property
     def table(self):
         if self._cached_table_obj:
-            self.log('Returning cached table object')
+            self._logger.debug('Returning cached table object')
             return self._cached_table_obj
-        self.log('Table object not cached')
-        self._cached_table_obj = self.dynamo.Table(self.table_name)
+        self._logger.debug('Table object not cached')
+        self._cached_table_obj = self.dynamo.Table(self._table_name)
         try:
             self._cached_table_obj.creation_date_time
         except self.dynamo.meta.client.exceptions.ResourceNotFoundException as exc:
-            self.log('Table does not exist')
+            self._logger.debug('Table does not exist')
             if self._autocreate_table: self._initialize_table()
             else: raise exc
         return self._cached_table_obj
 
     def is_active(self, flagname, arguments={}, use_cache=True):
-        key = self._gen_key_from_args(arguments)
-        active_flags = self.get_flags_for_key(key, use_cache)
+        active_flags = self.get_flags_for_args(arguments, use_cache)
         if flagname in active_flags: return True
         return False
 
-    def add_flag(self, flagname, arguments={}):
-        raise ReadOnlyException()
-
-    def remove_flag(self, flagname, arguments={}):
-        raise ReadOnlyException()
-
-class ReadWriteFlagManager(ReadOnlyFlagManager):
+    @write_only
     def _gen_attr_updates(self, flags, action):
         attr_updates = {
                 'active_flags': {
@@ -144,22 +171,27 @@ class ReadWriteFlagManager(ReadOnlyFlagManager):
             }
         return attr_updates
 
+    @write_only
     def _manipulate_flags(self, flagnames, arguments, action):
-        if not all(isinstance(flagname, string_types) for flagname in flagnames):
-            raise InvalidFlagNameTypeException('Flag names must be strings')
+        self._validate_flag_names(flagnames)
         key = self._gen_key_from_args(arguments)
         self.table.update_item(
                 Key=self._gen_dynamo_key_from_key(key),
                 AttributeUpdates=self._gen_attr_updates(flagnames, action)
             )
+
+    @write_only
     def add_flag(self, flagname, arguments={}):
         self._manipulate_flags([flagname], arguments, 'ADD')
 
+    @write_only
     def add_flags(self, flagnames, arguments={}):
         self._manipulate_flags(flagnames, arguments, 'ADD')
 
+    @write_only
     def remove_flag(self, flagname, arguments={}):
         self._manipulate_flags([flagname], arguments, 'DELETE')
 
+    @write_only
     def remove_flags(self, flagnames, arguments={}):
         self._manipulate_flags(flagnames, arguments, 'DELETE')

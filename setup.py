@@ -7,7 +7,7 @@ setup(
         'boto3',
         'six'
     ],
-    tests_require=['moto','py>=1.5.0'],
+    tests_require=['py>=1.5.0'],
     version='0.0.1',
     description='Scalable serverless feature flag implementation using DynamoDB',
     author='Ber Zoidberg',
