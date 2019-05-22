@@ -158,6 +158,14 @@ class TestReadWrite(unittest.TestCase):
         for flag_name in (flag_names[-2:] + flag_names[:2]):
             self.assertFalse(mgr.is_active(flag_name))
 
+    @mock_dynamodb2
+    def test_robust_read(self, *args):
+        mgr = dynflags.DynFlagManager('my-table', autocreate_table=True)
+        self.assertRaises(dynflags.InvalidFlagNameTypeException, mgr.is_active, 123)
+
+        mgr = dynflags.DynFlagManager('my-table', autocreate_table=True, robust=True)
+        mgr.is_active(123)
+
 class TestCachedRead(unittest.TestCase):
     @mock_dynamodb2
     def test_cached_read(self, *args):

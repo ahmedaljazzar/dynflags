@@ -21,7 +21,7 @@ def write_only(func):
 class DynFlagManager:
     def __init__(
             self, table_name, boto_config={ 'region_name': 'us-east-1' }, table_config=None, cache=None,
-            autocreate_table=False, read_only=True, consistent_reads=False, logger=None):
+            autocreate_table=False, read_only=True, consistent_reads=False, logger=None, robust=False):
         self._table_name = table_name
         self._autocreate_table = autocreate_table
         self._boto_config = boto_config
@@ -32,6 +32,7 @@ class DynFlagManager:
         self._read_only = read_only
         self._consistent_reads = consistent_reads
         self._logger = logger or logging.getLogger(__name__)
+        self._robust = robust
 
     def _initialize_table(self):
         # create the table
@@ -148,7 +149,18 @@ class DynFlagManager:
             else: raise exc
         return self._cached_table_obj
 
-    def is_active(self, flagname, arguments={}, use_cache=True):
+    def is_active(self, *args, **kwargs):
+        if self._robust:
+            try:
+                return self._is_active(*args, **kwargs)
+            except Exception as exc:
+                self._logger.error(str(exc))
+                return False
+        else:
+            return self._is_active(*args, **kwargs)
+
+    def _is_active(self, flagname, arguments={}, use_cache=True):
+        self._validate_flag_names([flagname])
         active_flags = self.get_flags_for_args(arguments, use_cache)
         if flagname in active_flags: return True
         return False
