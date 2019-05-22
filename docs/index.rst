@@ -1,16 +1,12 @@
-.. dynflags documentation master file, created by
-   sphinx-quickstart on Tue May 21 22:25:59 2019.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Welcome to Getting Started with Sphinx's documentation!
+=======================================================
 
-Welcome to dynflags's documentation!
-====================================
+.. automodule:: dynflags.main
+    :members:
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
-
 
 Indices and tables
 ==================

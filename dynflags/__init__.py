@@ -1,2 +1,2 @@
-from .managers import DynFlagManager
+from .main import DynFlagManager
 from .exceptions import *
