@@ -37,5 +37,5 @@ jobs:
           name: run tests
           command: |
             . venv/bin/activate
-            coverage run setup.py test
+            coverage run --include=dynflags/\* setup.py test
             coverage report

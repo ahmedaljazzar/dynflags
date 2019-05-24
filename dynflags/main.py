@@ -8,7 +8,8 @@ from __future__ import print_function
 from datetime import datetime
 from six import string_types
 
-import boto3, logging
+import boto3
+import logging
 
 from .exceptions import *
 
@@ -100,7 +101,8 @@ class DynFlagManager:
             raise InvalidFlagNameTypeException('Flag names must be string')
 
     def _gen_key_from_args(self, arguments):
-        if not arguments: return '__global__'
+        if not arguments:
+            return '__global__'
         self._validate_arguments(arguments)
         arglist = list(arguments.items())
         arglist.sort(key=lambda x: x[0])
@@ -162,8 +164,10 @@ class DynFlagManager:
             self._cached_table_obj.creation_date_time
         except self.dynamo.meta.client.exceptions.ResourceNotFoundException as exc:
             self._logger.debug('Table does not exist')
-            if self._autocreate_table: self._initialize_table()
-            else: raise exc
+            if self._autocreate_table:
+                self._initialize_table()
+            else:
+                raise exc
         return self._cached_table_obj
 
     def is_active(self, *args, **kwargs):
@@ -179,7 +183,8 @@ class DynFlagManager:
     def _is_active(self, flagname, arguments={}, use_cache=True):
         self._validate_flag_names([flagname])
         active_flags = self.get_flags_for_args(arguments, use_cache)
-        if flagname in active_flags: return True
+        if flagname in active_flags:
+            return True
         return False
 
     @write_only
