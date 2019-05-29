@@ -5,7 +5,7 @@ The core module of dynflags
 """
 from __future__ import print_function
 
-from datetime import datetime
+from datetime import datetime, timezone
 from six import string_types
 
 import boto3
@@ -212,7 +212,7 @@ class DynFlagManager:
                 "Action": "ADD"
             },
             'last_update_time': {
-                "Value": datetime.utcnow().isoformat(),
+                "Value": datetime.now(timezone.utc).astimezone().isoformat(),
                 "Action": "PUT"
             }
         }
