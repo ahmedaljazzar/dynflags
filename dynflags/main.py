@@ -147,6 +147,19 @@ class DynFlagManager:
         key = self._gen_key_from_args(arguments)
         return self.get_flags_for_key(key, use_cache)
 
+    def get_item_for_key(self, key):
+        result = self.table.get_item(
+            Key=self._gen_dynamo_key_from_key(key),
+            ConsistentRead=self._consistent_reads
+        )
+
+        item = result['Item']
+        return item
+
+    def get_item_for_args(self, arguments):
+        key = self._gen_key_from_args(arguments)
+        return self.get_item_for_key(key)
+
     @property
     def dynamo(self):
         if not self._dynamo:
