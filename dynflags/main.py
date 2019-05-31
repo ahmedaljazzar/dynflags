@@ -6,6 +6,8 @@ The core module of dynflags
 from __future__ import print_function
 
 from datetime import datetime, timezone
+
+from boto3.dynamodb.conditions import Attr
 from six import string_types
 
 import boto3
@@ -60,21 +62,21 @@ class DynFlagManager:
                                          }],
                                          AttributeDefinitions=[{
                                              "AttributeName":
-                                             "arguments",
+                                                 "arguments",
                                              "AttributeType":
-                                             "S"
+                                                 "S"
                                          }, {
                                              "AttributeName":
-                                             "active_flags",
+                                                 "active_flags",
                                              "AttributeType":
-                                             "S"
+                                                 "S"
                                          }],
                                          GlobalSecondaryIndexes=[{
                                              'IndexName':
-                                             'active_flags',
+                                                 'active_flags',
                                              'KeySchema': [{
                                                  'AttributeName':
-                                                 'active_flags',
+                                                     'active_flags',
                                                  'KeyType': 'HASH'
                                              }],
                                              'Projection': {
@@ -102,8 +104,8 @@ class DynFlagManager:
             raise InvalidFlagNameTypeException('Flag names must be string')
 
     def _validate_action_type(self, action):
-        if not action in ('DELETE', 'ADD', 'PUT', 'EXCLUDE'):
-            raise InvalidActionTypeException('Action must be either DELETE, ADD, PUT, or EXCLUDE')
+        if not action in ('DELETE', 'ADD', 'PUT', 'EXCLUDE', 'DELETE_EXCLUDED'):
+            raise InvalidActionTypeException('Action must be either DELETE, ADD, PUT, EXCLUDE, or DELETE_EXCLUDED')
 
     def _gen_key_from_args(self, arguments):
         if not arguments:
@@ -140,6 +142,9 @@ class DynFlagManager:
             excluded_flags_action = 'ADD'
         elif action == 'DELETE':
             active_flags_action = 'DELETE'
+            excluded_flags_action = None
+        elif action == 'DELETE_EXCLUDED':
+            active_flags_action = None
             excluded_flags_action = 'DELETE'
         elif action == 'PUT':
             active_flags_action = 'PUT'
@@ -236,14 +241,6 @@ class DynFlagManager:
         active_flags_action, excluded_flags_action = self._gen_actions(action)
 
         attr_updates = {
-            'active_flags': {
-                "Value": set(flags),
-                "Action": active_flags_action
-            },
-            'excluded_flags': {
-                "Value": set(flags),
-                "Action": excluded_flags_action
-            },
             'version': {
                 "Value": 1,
                 "Action": "ADD"
@@ -253,6 +250,18 @@ class DynFlagManager:
                 "Action": "PUT"
             }
         }
+
+        if active_flags_action:
+            attr_updates['active_flags'] = {
+                "Value": set(flags),
+                "Action": active_flags_action
+            }
+        if excluded_flags_action:
+            attr_updates['excluded_flags'] = {
+                "Value": set(flags),
+                "Action": excluded_flags_action
+            }
+
         return attr_updates
 
     @write_only
@@ -289,9 +298,33 @@ class DynFlagManager:
         self._manipulate_flags(in_globals, arguments, 'EXCLUDE')
 
     @write_only
-    def remove_flag(self, flagname, arguments):
-        self._manipulate_flags([flagname], arguments, 'DELETE')
+    def remove_excluded_flag(self, flagname, arguments):
+        self.remove_excluded_flags([flagname], arguments)
+
+    @write_only
+    def remove_excluded_flags(self, flagnames, arguments):
+        self._manipulate_flags(flagnames, arguments, 'DELETE_EXCLUDED')
+
+    @write_only
+    def remove_flag(self, flagname, arguments={}):
+        self.remove_flags([flagname], arguments=arguments)
 
     @write_only
     def remove_flags(self, flagnames, arguments={}):
+        if not arguments:
+            self._clean_excluded_list(flagnames)
+
         self._manipulate_flags(flagnames, arguments, 'DELETE')
+
+    def _clean_excluded_list(self, flagnames):
+        response = self.table.scan(
+            FilterExpression=Attr('arguments').contains('=')
+        )
+
+        for item in response['Items']:
+            arguments = self._gen_args_from_key(item['arguments'])
+            excluded_flags = item.get('excluded_flags', set())
+
+            common_flags = excluded_flags & set(flagnames)
+
+            self.remove_excluded_flags(common_flags, arguments=arguments)
