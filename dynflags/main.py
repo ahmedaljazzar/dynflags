@@ -100,6 +100,10 @@ class DynFlagManager:
         if not all(isinstance(x, string_types) for x in flags):
             raise InvalidFlagNameTypeException('Flag names must be string')
 
+    def _validate_action_type(self, action):
+        if not action in ('DELETE', 'ADD', 'PUT', 'EXCLUDE'):
+            raise InvalidActionTypeException('Action must be either DELETE, ADD, PUT, or EXCLUDE')
+
     def _gen_key_from_args(self, arguments):
         if not arguments:
             return '__global__'
@@ -118,6 +122,24 @@ class DynFlagManager:
             k, v = frag.split("=")
             args[k] = v
         return args
+
+    def _gen_actions(self, action):
+        self._validate_action_type(action)
+
+        if action == 'EXCLUDE':
+            active_flags_action = 'DELETE'
+            excluded_flags_action = 'ADD'
+        elif action == 'DELETE':
+            active_flags_action = 'DELETE'
+            excluded_flags_action = 'DELETE'
+        elif action == 'PUT':
+            active_flags_action = 'PUT'
+            excluded_flags_action = 'DELETE'
+        else:
+            active_flags_action = 'ADD'
+            excluded_flags_action = 'DELETE'
+
+        return active_flags_action, excluded_flags_action
 
     def _query_dynamodb_for_flags_for_key(self, key):
         self._logger.debug('Querying DynamoDB for key: %s' %
@@ -202,10 +224,16 @@ class DynFlagManager:
 
     @write_only
     def _gen_attr_updates(self, flags, action):
+        active_flags_action, excluded_flags_action = self._gen_actions(action)
+
         attr_updates = {
             'active_flags': {
                 "Value": set(flags),
-                "Action": action
+                "Action": active_flags_action
+            },
+            'excluded_flags': {
+                "Value": set(flags),
+                "Action": excluded_flags_action
             },
             'version': {
                 "Value": 1,
@@ -222,9 +250,10 @@ class DynFlagManager:
     def _manipulate_flags(self, flagnames, arguments, action):
         self._validate_flag_names(flagnames)
         key = self._gen_key_from_args(arguments)
-        self.table.update_item(Key=self._gen_dynamo_key_from_key(key),
-                               AttributeUpdates=self._gen_attr_updates(
-                                   flagnames, action))
+        self.table.update_item(
+            Key=self._gen_dynamo_key_from_key(key),
+            AttributeUpdates=self._gen_attr_updates(flagnames, action)
+        )
 
     @write_only
     def add_flag(self, flagname, arguments={}):
@@ -235,7 +264,15 @@ class DynFlagManager:
         self._manipulate_flags(flagnames, arguments, 'ADD')
 
     @write_only
-    def remove_flag(self, flagname, arguments={}):
+    def exclude_flag(self, flagname, arguments={}):
+        self._manipulate_flags([flagname], arguments, 'EXCLUDE')
+
+    @write_only
+    def exclude_flags(self, flagnames, arguments):
+        self._manipulate_flags(flagnames, arguments, 'EXCLUDE')
+
+    @write_only
+    def remove_flag(self, flagname, arguments):
         self._manipulate_flags([flagname], arguments, 'DELETE')
 
     @write_only

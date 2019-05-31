@@ -12,3 +12,7 @@ class InvalidArgumentKeyTypeException(Exception):
 
 class InvalidArgumentValueTypeException(Exception):
     pass
+
+
+class InvalidActionTypeException(Exception):
+    pass
