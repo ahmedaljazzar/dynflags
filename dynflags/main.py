@@ -14,6 +14,7 @@ import logging
 from .exceptions import *
 
 DEFAULT_TABLE_SPEC = {"BillingMode": 'PAY_PER_REQUEST'}
+GLOBAL_LIST_KEY = '__global__'
 
 
 def write_only(func):
@@ -106,7 +107,7 @@ class DynFlagManager:
 
     def _gen_key_from_args(self, arguments):
         if not arguments:
-            return '__global__'
+            return GLOBAL_LIST_KEY
         self._validate_arguments(arguments)
         arglist = list(arguments.items())
         arglist.sort(key=lambda x: x[0])
@@ -115,6 +116,14 @@ class DynFlagManager:
         self._logger.debug('Generated key from args: %s, %s' %
                            (arguments, key))
         return key
+
+    def _filter_global_flags(self, flags):
+        global_flags = self.get_flags_for_key(GLOBAL_LIST_KEY)
+
+        not_globals = list(set(flags) - global_flags)
+        in_globals = list(set(flags) & global_flags)
+
+        return in_globals, not_globals
 
     def _gen_args_from_key(self, key):
         args = {}
@@ -264,12 +273,20 @@ class DynFlagManager:
         self._manipulate_flags(flagnames, arguments, 'ADD')
 
     @write_only
-    def exclude_flag(self, flagname, arguments={}):
-        self._manipulate_flags([flagname], arguments, 'EXCLUDE')
+    def exclude_flag(self, flagname, arguments):
+        self.exclude_flags([flagname], arguments)
 
     @write_only
     def exclude_flags(self, flagnames, arguments):
-        self._manipulate_flags(flagnames, arguments, 'EXCLUDE')
+        in_globals, not_globals = self._filter_global_flags(flagnames)
+
+        if not_globals:
+            self._logger.info('Did not exclude {} as those flags are not in the global list')
+
+        if not in_globals:
+            raise InvalidFlagsException('Cannot exclude flags that do not exist in the global list')
+
+        self._manipulate_flags(in_globals, arguments, 'EXCLUDE')
 
     @write_only
     def remove_flag(self, flagname, arguments):

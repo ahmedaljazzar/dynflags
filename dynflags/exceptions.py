@@ -16,3 +16,7 @@ class InvalidArgumentValueTypeException(Exception):
 
 class InvalidActionTypeException(Exception):
     pass
+
+
+class InvalidFlagsException(Exception):
+    pass
