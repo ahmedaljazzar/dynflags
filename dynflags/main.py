@@ -339,3 +339,39 @@ class DynFlagManager:
             common_flags = excluded_flags & set(flagnames)
 
             self.remove_excluded_flags(common_flags, arguments=arguments)
+
+    def get_flags(self):
+        global_flags = self.get_item_for_key(GLOBAL_LIST_KEY).get('active_flags')
+        all_flags = [{'name': flag, 'is_global': True, 'subdomains': []} for flag in global_flags]
+
+        agencies_response = self.table.scan(FilterExpression=Attr('arguments').contains('='))
+        agencies = agencies_response['Items']
+
+        for agency in agencies:
+            agency_args = self._gen_args_from_key(agency['arguments'])
+            subdomain = agency_args['agency.subdomain']
+
+            for flag in agency['active_flags']:
+                detailed_subdomain = {
+                    'subdomain': subdomain,
+                    'active': True,
+                }
+                # Check if in the inverted dict the key exists
+                if flag not in all_flags:
+                    # If not create a new list
+                    all_flags[flag] = {'is_global': False, 'subdomains': [detailed_subdomain, ]}
+                else:
+                    all_flags[flag]['subdomains'].append(detailed_subdomain)
+
+            for flag in agency['excluded_flags']:
+                detailed_subdomain = {
+                    'subdomain': subdomain,
+                    'active': False,
+                }
+                # Check if in the inverted dict the key exists
+                if flag not in all_flags:
+                    # If not create a new list
+                    all_flags[flag] = {'is_global': False, 'subdomains': [detailed_subdomain, ]}
+                else:
+                    all_flags[flag]['subdomains'].append(detailed_subdomain)
+        return all_flags
