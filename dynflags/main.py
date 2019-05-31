@@ -168,12 +168,12 @@ class DynFlagManager:
                            (key, excluded_flags))
 
         global_item = self.table.get_item(
-            Key=GLOBAL_LIST_KEY,
+            Key=self._gen_dynamo_key_from_key(GLOBAL_LIST_KEY),
             ConsistentRead=self._consistent_reads)
         global_flags = global_item.get('Item', {}).get('active_flags', set())
         self._logger.debug('Found global flags %s' % global_flags)
 
-        active_flags = (global_flags + active_flags) - excluded_flags
+        active_flags = (global_flags | active_flags) - excluded_flags
         return active_flags
 
     def get_flags_for_key(self, key, use_cache=True):
