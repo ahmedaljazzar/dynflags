@@ -6,6 +6,10 @@ class InvalidFlagNameTypeException(Exception):
     pass
 
 
+class InvalidFlagValueTypeException(Exception):
+    pass
+
+
 class InvalidArgumentKeyTypeException(Exception):
     pass
 

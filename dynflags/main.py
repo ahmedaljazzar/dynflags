@@ -8,6 +8,7 @@ from __future__ import print_function
 from datetime import datetime, timezone
 
 from boto3.dynamodb.conditions import Attr
+from botocore.exceptions import ClientError
 from six import string_types
 
 import boto3
@@ -16,7 +17,7 @@ import logging
 from .exceptions import *
 
 DEFAULT_TABLE_SPEC = {"BillingMode": 'PAY_PER_REQUEST'}
-GLOBAL_LIST_KEY = '__global__'
+DEFAULT_LIST_KEY = '__default__'
 
 
 def write_only(func):
@@ -51,6 +52,29 @@ class DynFlagManager:
         self._logger = logger or logging.getLogger(__name__)
         self._robust = robust
 
+    @property
+    def dynamo(self):
+        if not self._dynamo:
+            self._dynamo = boto3.resource('dynamodb', **self._boto_config)
+        return self._dynamo
+
+    @property
+    def table(self):
+        if self._cached_table_obj:
+            self._logger.debug('Returning cached table object')
+            return self._cached_table_obj
+        self._logger.debug('Table object not cached')
+        self._cached_table_obj = self.dynamo.Table(self._table_name)
+        try:
+            self._cached_table_obj.creation_date_time
+        except self.dynamo.meta.client.exceptions.ResourceNotFoundException as exc:
+            self._logger.debug('Table does not exist')
+            if self._autocreate_table:
+                self._initialize_table()
+            else:
+                raise exc
+        return self._cached_table_obj
+
     def _initialize_table(self):
         # create the table
         self._logger.debug('Creating DynamoDB Table: %s, %s' %
@@ -65,23 +89,6 @@ class DynFlagManager:
                                                  "arguments",
                                              "AttributeType":
                                                  "S"
-                                         }, {
-                                             "AttributeName":
-                                                 "active_flags",
-                                             "AttributeType":
-                                                 "S"
-                                         }],
-                                         GlobalSecondaryIndexes=[{
-                                             'IndexName':
-                                                 'active_flags',
-                                             'KeySchema': [{
-                                                 'AttributeName':
-                                                     'active_flags',
-                                                 'KeyType': 'HASH'
-                                             }],
-                                             'Projection': {
-                                                 'ProjectionType': 'ALL',
-                                             }
                                          }],
                                          **self._table_config)
         table.meta.client.get_waiter('table_exists').wait(
@@ -99,17 +106,20 @@ class DynFlagManager:
             raise InvalidArgumentValueTypeException(
                 'Argument values must be strings')
 
-    def _validate_flag_names(self, flags):
+    def _validate_flags(self, flags):
         if not all(isinstance(x, string_types) for x in flags):
-            raise InvalidFlagNameTypeException('Flag names must be string')
+            raise InvalidFlagNameTypeException('Flag names must be strings')
+
+        if not all(isinstance(x, bool) for x in flags.values()):
+            raise InvalidFlagValueTypeException('Flag values must be booleans')
 
     def _validate_action_type(self, action):
-        if not action in ('DELETE', 'ADD', 'PUT', 'EXCLUDE', 'DELETE_EXCLUDED'):
-            raise InvalidActionTypeException('Action must be either DELETE, ADD, PUT, EXCLUDE, or DELETE_EXCLUDED')
+        if not action in ('DELETE', 'ADD', 'PUT'):
+            raise InvalidActionTypeException('Action must be either DELETE, ADD, or PUT')
 
     def _gen_key_from_args(self, arguments):
         if not arguments:
-            return GLOBAL_LIST_KEY
+            return DEFAULT_LIST_KEY
         self._validate_arguments(arguments)
         arglist = list(arguments.items())
         arglist.sort(key=lambda x: x[0])
@@ -119,14 +129,6 @@ class DynFlagManager:
                            (arguments, key))
         return key
 
-    def _filter_global_flags(self, flags):
-        global_flags = self.get_flags_for_key(GLOBAL_LIST_KEY)
-
-        not_globals = list(set(flags) - global_flags)
-        in_globals = list(set(flags) & global_flags)
-
-        return in_globals, not_globals
-
     def _gen_args_from_key(self, key):
         args = {}
         for frag in key.split(';'):
@@ -134,47 +136,17 @@ class DynFlagManager:
             args[k] = v
         return args
 
-    def _gen_actions(self, action):
-        self._validate_action_type(action)
-
-        if action == 'EXCLUDE':
-            active_flags_action = 'DELETE'
-            excluded_flags_action = 'ADD'
-        elif action == 'DELETE':
-            active_flags_action = 'DELETE'
-            excluded_flags_action = None
-        elif action == 'DELETE_EXCLUDED':
-            active_flags_action = None
-            excluded_flags_action = 'DELETE'
-        elif action == 'PUT':
-            active_flags_action = 'PUT'
-            excluded_flags_action = 'DELETE'
-        else:
-            active_flags_action = 'ADD'
-            excluded_flags_action = 'DELETE'
-
-        return active_flags_action, excluded_flags_action
-
     def _query_dynamodb_for_flags_for_key(self, key):
         self._logger.debug('Querying DynamoDB for key: %s' %
                            self._gen_dynamo_key_from_key(key))
         item = self.table.get_item(Key=self._gen_dynamo_key_from_key(key),
                                    ConsistentRead=self._consistent_reads)
-        active_flags = item.get('Item', {}).get('active_flags', set())
-        self._logger.debug('Found active flags for key: %s, %s' %
-                           (key, active_flags))
-        excluded_flags = item.get('Item', {}).get('excluded_flags', set())
-        self._logger.debug('Found excluded flags for key: %s, %s' %
-                           (key, excluded_flags))
 
-        global_item = self.table.get_item(
-            Key=self._gen_dynamo_key_from_key(GLOBAL_LIST_KEY),
-            ConsistentRead=self._consistent_reads)
-        global_flags = global_item.get('Item', {}).get('active_flags', set())
-        self._logger.debug('Found global flags %s' % global_flags)
+        flags = item.get('Item', {}).get('flags', set())
+        self._logger.debug('Found the following flags for key: %s, %s' %
+                           (key, flags))
 
-        active_flags = (global_flags | active_flags) - excluded_flags
-        return active_flags
+        return flags
 
     def get_flags_for_key(self, key, use_cache=True):
         if use_cache and self._cache:
@@ -207,29 +179,6 @@ class DynFlagManager:
         key = self._gen_key_from_args(arguments)
         return self.get_item_for_key(key)
 
-    @property
-    def dynamo(self):
-        if not self._dynamo:
-            self._dynamo = boto3.resource('dynamodb', **self._boto_config)
-        return self._dynamo
-
-    @property
-    def table(self):
-        if self._cached_table_obj:
-            self._logger.debug('Returning cached table object')
-            return self._cached_table_obj
-        self._logger.debug('Table object not cached')
-        self._cached_table_obj = self.dynamo.Table(self._table_name)
-        try:
-            self._cached_table_obj.creation_date_time
-        except self.dynamo.meta.client.exceptions.ResourceNotFoundException as exc:
-            self._logger.debug('Table does not exist')
-            if self._autocreate_table:
-                self._initialize_table()
-            else:
-                raise exc
-        return self._cached_table_obj
-
     def is_active(self, *args, **kwargs):
         if self._robust:
             try:
@@ -241,7 +190,8 @@ class DynFlagManager:
             return self._is_active(*args, **kwargs)
 
     def _is_active(self, flagname, arguments={}, use_cache=True):
-        self._validate_flag_names([flagname])
+        # TODO: Edit to match the new logic
+        self._validate_flags([flagname])
         active_flags = self.get_flags_for_args(arguments, use_cache)
         if flagname in active_flags:
             return True
@@ -249,96 +199,49 @@ class DynFlagManager:
 
     @write_only
     def _gen_attr_updates(self, flags, action):
-        active_flags_action, excluded_flags_action = self._gen_actions(action)
+        self._validate_action_type(action)
 
-        attr_updates = {
-            'version': {
-                "Value": 1,
-                "Action": "ADD"
-            },
-            'last_update_time': {
-                "Value": datetime.now(timezone.utc).astimezone().isoformat(),
-                "Action": "PUT"
-            }
-        }
-
-        if active_flags_action:
-            attr_updates['active_flags'] = {
-                "Value": set(flags),
-                "Action": active_flags_action
-            }
-        if excluded_flags_action:
-            attr_updates['excluded_flags'] = {
-                "Value": set(flags),
-                "Action": excluded_flags_action
-            }
-
-        return attr_updates
+        return dict(
+            UpdateExpression='SET {}'.format(','.join(f'flags.#{k}=:{k}' for k in flags)),
+            ExpressionAttributeNames={f'#{k}': k for k in flags},
+            ExpressionAttributeValues={f':{k}': v for k, v in flags.items()}
+        )
 
     @write_only
-    def _manipulate_flags(self, flagnames, arguments, action):
-        self._validate_flag_names(flagnames)
+    def _manipulate_flags(self, flags, arguments, action):
+        self._validate_flags(flags)
         key = self._gen_key_from_args(arguments)
-        self.table.update_item(
-            Key=self._gen_dynamo_key_from_key(key),
-            AttributeUpdates=self._gen_attr_updates(flagnames, action)
-        )
+        dynamo_key = self._gen_dynamo_key_from_key(key)
+
+        try:
+            self.table.update_item(
+                Key=dynamo_key,
+                **self._gen_attr_updates(flags, action)
+            )
+        except ClientError:
+            self.table.update_item(
+                Key=dynamo_key,
+                UpdateExpression='SET flags = :flags',
+                ExpressionAttributeValues={':flags': flags}
+            )
 
     @write_only
-    def add_flag(self, flagname, arguments={}):
-        self._manipulate_flags([flagname], arguments, 'ADD')
+    def add_flag(self, name, enabled):
+        flag = {name: enabled}
+
+        self._manipulate_flags(flag, {}, 'ADD')
 
     @write_only
-    def add_flags(self, flagnames, arguments={}):
-        self._manipulate_flags(flagnames, arguments, 'ADD')
+    def add_flags(self, flag_names):
+        self._manipulate_flags(flag_names, {}, 'ADD')
 
     @write_only
-    def exclude_flag(self, flagname, arguments):
-        self.exclude_flags([flagname], arguments)
+    def remove_flag(self, flag_name):
+        self.remove_flags([flag_name], arguments={})
 
     @write_only
-    def exclude_flags(self, flagnames, arguments):
-        in_globals, not_globals = self._filter_global_flags(flagnames)
-
-        if not_globals:
-            self._logger.info('Did not exclude {} as those flags are not in the global list')
-
-        if not in_globals:
-            raise InvalidFlagsException('Cannot exclude flags that do not exist in the global list')
-
-        self._manipulate_flags(in_globals, arguments, 'EXCLUDE')
-
-    @write_only
-    def remove_excluded_flag(self, flagname, arguments):
-        self.remove_excluded_flags([flagname], arguments)
-
-    @write_only
-    def remove_excluded_flags(self, flagnames, arguments):
-        self._manipulate_flags(flagnames, arguments, 'DELETE_EXCLUDED')
-
-    @write_only
-    def remove_flag(self, flagname, arguments={}):
-        self.remove_flags([flagname], arguments=arguments)
-
-    @write_only
-    def remove_flags(self, flagnames, arguments={}):
-        if not arguments:
-            self._clean_excluded_list(flagnames)
-
-        self._manipulate_flags(flagnames, arguments, 'DELETE')
-
-    def _clean_excluded_list(self, flagnames):
-        response = self.table.scan(
-            FilterExpression=Attr('arguments').contains('=')
-        )
-
-        for item in response['Items']:
-            arguments = self._gen_args_from_key(item['arguments'])
-            excluded_flags = item.get('excluded_flags', set())
-
-            common_flags = excluded_flags & set(flagnames)
-
-            self.remove_excluded_flags(common_flags, arguments=arguments)
+    def remove_flags(self, flag_names, arguments={}):
+        self._manipulate_flags(flag_names, arguments, 'DELETE')
 
     def get_flags(self):
         raise NotImplementedError()
