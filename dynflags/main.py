@@ -99,16 +99,16 @@ class DynFlagManager:
 
     def _validate_arguments(self, arguments):
         if not all(isinstance(x, string_types) for x in arguments.keys()):
-            raise InvalidArgumentKeyTypeException(
-                'Argument keys must be strings')
+            raise InvalidArgumentKeyTypeException('Argument keys must be strings')
         if not all(isinstance(x, string_types) for x in arguments.values()):
-            raise InvalidArgumentValueTypeException(
-                'Argument values must be strings')
+            raise InvalidArgumentValueTypeException('Argument values must be strings')
 
-    def _validate_flag_names(self, flag_names):
-        return
-        if not all(isinstance(x, dict) for x in flag_names):
-            raise InvalidFlagNameTypeException('Flags must be dictionaries')
+    def _validate_flags(self, flag_names):
+        if not all(isinstance(x, string_types) for x in flag_names.keys()):
+            raise InvalidFlagNameTypeException('Flags names must be strings')
+
+        if not all(isinstance(x, bool) for x in flag_names.values()):
+            raise InvalidFlagValueTypeException('Flags values must be either true or false')
 
     def _validate_action_type(self, action):
         if not action in ('REMOVE', 'ADD', 'PUT'):
@@ -164,8 +164,7 @@ class DynFlagManager:
         return self._get_flags_for_key(key, use_cache)
 
     def _is_active(self, flag_name, arguments={}, use_cache=True):
-        # TODO: Edit to match the new logic
-        self._validate_flag_names([flag_name])
+        self._validate_flags({flag_name: True})
         active_flags = self._get_flags_for_args(arguments, use_cache)
         if flag_name in active_flags:
             return True
@@ -186,7 +185,7 @@ class DynFlagManager:
 
     @write_only
     def _manipulate_flags(self, flag_names, arguments, action):
-        self._validate_flag_names(flag_names)
+        self._validate_flags(flag_names)
         key = self._gen_key_from_args(arguments)
         dynamo_key = self._gen_dynamo_key_from_key(key)
 
