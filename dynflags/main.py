@@ -107,15 +107,13 @@ class DynFlagManager:
                 'Argument values must be strings')
 
     def _validate_flags(self, flags):
-        if not all(isinstance(x, string_types) for x in flags):
-            raise InvalidFlagNameTypeException('Flag names must be strings')
-
-        if not all(isinstance(x, bool) for x in flags.values()):
-            raise InvalidFlagValueTypeException('Flag values must be booleans')
+        return
+        if not all(isinstance(x, dict) for x in flags):
+            raise InvalidFlagNameTypeException('Flags must be dictionaries')
 
     def _validate_action_type(self, action):
-        if not action in ('DELETE', 'ADD', 'PUT'):
-            raise InvalidActionTypeException('Action must be either DELETE, ADD, or PUT')
+        if not action in ('REMOVE', 'ADD', 'PUT'):
+            raise InvalidActionTypeException('Action must be either REMOVE, ADD, or PUT')
 
     def _gen_key_from_args(self, arguments):
         if not arguments:
@@ -197,14 +195,27 @@ class DynFlagManager:
             return True
         return False
 
+    def _merge_flags(self, flags):
+        new = {}
+
+        for flag in flags:
+            for k, v in flag.items():
+                new[k] = v
+
+        return new
+
     @write_only
     def _gen_attr_updates(self, flags, action):
-        self._validate_action_type(action)
+        if action == 'REMOVE':
+            return dict(
+                UpdateExpression='{} {}'.format(action, ','.join(f'flags.{flag}' for flag in flags)),
+            )
 
+        new = self._merge_flags(flags)
         return dict(
-            UpdateExpression='SET {}'.format(','.join(f'flags.#{k}=:{k}' for k in flags)),
-            ExpressionAttributeNames={f'#{k}': k for k in flags},
-            ExpressionAttributeValues={f':{k}': v for k, v in flags.items()}
+            UpdateExpression='{} {}'.format(action, ','.join(f'flags.#{k}=:{k}' for k in new)),
+            ExpressionAttributeNames={f'#{k}': k for k in new},
+            ExpressionAttributeValues={f':{k}': v for k, v in new.items()}
         )
 
     @write_only
@@ -218,30 +229,31 @@ class DynFlagManager:
                 Key=dynamo_key,
                 **self._gen_attr_updates(flags, action)
             )
-        except ClientError:
+        except ClientError as e:
+            raise e
             self.table.update_item(
                 Key=dynamo_key,
                 UpdateExpression='SET flags = :flags',
-                ExpressionAttributeValues={':flags': flags}
+                ExpressionAttributeValues={':flags': self._merge_flags(flags)}
             )
 
     @write_only
     def add_flag(self, name, enabled):
         flag = {name: enabled}
 
-        self._manipulate_flags(flag, {}, 'ADD')
+        self.add_flags([flag])
 
     @write_only
-    def add_flags(self, flag_names):
-        self._manipulate_flags(flag_names, {}, 'ADD')
+    def add_flags(self, flag_names, arguments={}):
+        self._manipulate_flags(flag_names, arguments, 'SET')
 
     @write_only
     def remove_flag(self, flag_name):
-        self.remove_flags([flag_name], arguments={})
+        self.remove_flags([flag_name])
 
     @write_only
     def remove_flags(self, flag_names, arguments={}):
-        self._manipulate_flags(flag_names, arguments, 'DELETE')
+        self._manipulate_flags(flag_names, arguments, 'REMOVE')
 
     def get_flags(self):
         raise NotImplementedError()
