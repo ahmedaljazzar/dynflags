@@ -5,6 +5,8 @@ The core module of dynflags
 """
 from __future__ import print_function
 
+from collections import defaultdict
+
 from botocore.exceptions import ClientError
 from six import string_types
 
@@ -137,13 +139,13 @@ class DynFlagManager:
         item = self.table.get_item(Key=self._gen_dynamo_key_from_key(key),
                                    ConsistentRead=self._consistent_reads)
 
-        flags = item.get('Item', {}).get('flags', set())
+        flags = item.get('Item', {}).get('flags', {})
         self._logger.debug('Found the following flags for key: %s, %s' %
                            (key, flags))
 
         return flags
 
-    def get_flags_for_key(self, key, use_cache=True):
+    def _get_flags_for_key(self, key, use_cache=True):
         if use_cache and self._cache:
             self._logger.debug('Checking cache for key: %s' % key)
             cached_flags = self._cache.get(key)
@@ -157,37 +159,14 @@ class DynFlagManager:
             self._cache.set(key, flags)
         return flags
 
-    def get_flags_for_args(self, arguments, use_cache=True):
+    def _get_flags_for_args(self, arguments, use_cache=True):
         key = self._gen_key_from_args(arguments)
-        return self.get_flags_for_key(key, use_cache)
-
-    def get_item_for_key(self, key):
-        result = self.table.get_item(
-            Key=self._gen_dynamo_key_from_key(key),
-            ConsistentRead=self._consistent_reads
-        )
-
-        item = result['Item']
-        return item
-
-    def get_item_for_args(self, arguments):
-        key = self._gen_key_from_args(arguments)
-        return self.get_item_for_key(key)
-
-    def is_active(self, *args, **kwargs):
-        if self._robust:
-            try:
-                return self._is_active(*args, **kwargs)
-            except Exception as exc:
-                self._logger.error(str(exc))
-                return False
-        else:
-            return self._is_active(*args, **kwargs)
+        return self._get_flags_for_key(key, use_cache)
 
     def _is_active(self, flag_name, arguments={}, use_cache=True):
         # TODO: Edit to match the new logic
         self._validate_flag_names([flag_name])
-        active_flags = self.get_flags_for_args(arguments, use_cache)
+        active_flags = self._get_flags_for_args(arguments, use_cache)
         if flag_name in active_flags:
             return True
         return False
@@ -233,6 +212,10 @@ class DynFlagManager:
                 ExpressionAttributeValues={':flags': self._merge_flags(flag_names)}
             )
 
+    def _merge(self, dict1, dict2):
+        res = {**dict1, **dict2}
+        return res
+
     @write_only
     def add_flag(self, flag_name, enabled, arguments={}):
         flag = {flag_name: enabled}
@@ -251,27 +234,48 @@ class DynFlagManager:
     def remove_flags(self, flag_names, arguments={}):
         self._manipulate_flags(flag_names, arguments, 'REMOVE')
 
-    def get_flag_names(self, key=None, arguments=None):
-        if key:
-            item = self.get_item_for_key(key)
-            return item['flags']
-        elif arguments:
+    def is_active(self, *args, **kwargs):
+        if self._robust:
+            try:
+                return self._is_active(*args, **kwargs)
+            except Exception as exc:
+                self._logger.error(str(exc))
+                return False
+        else:
+            return self._is_active(*args, **kwargs)
 
-            default_item = self.get_item_for_key(DEFAULT_LIST_KEY)
-            default_flags = default_item['flags']
+    def get_item_for_key(self, key):
+        result = self.table.get_item(
+            Key=self._gen_dynamo_key_from_key(key),
+            ConsistentRead=self._consistent_reads
+        )
 
-            item = self.get_item_for_args(arguments)
-            item_flags = item['flags']
+        item = result['Item']
+        return item
 
-            return self._merge(default_flags, item_flags)
+    def get_item_for_args(self, arguments):
+        key = self._gen_key_from_args(arguments)
+        return self.get_item_for_key(key)
 
-        flag_names = {}
+    def get_default_flags(self):
+        return self._get_flags_for_key(DEFAULT_LIST_KEY)
+
+    def get_flags_for_args(self, arguments):
+        default_flags = self.get_default_flags()
+        item_flags = self._get_flags_for_args(arguments)
+
+        return self._merge(default_flags, item_flags)
+
+    def get_all_flags(self):
         response = self.table.scan()
-        for item in response['Items']:
-            flag_names.update(item['flags'])
 
-        return flag_names
+        flags = defaultdict(dict)
+        for item in response.get('Items', []):
+            arguments = item.get('arguments')
 
-    def _merge(self, dict1, dict2):
-        res = {**dict1, **dict2}
-        return res
+            for key, value in item.get('flags', {}).items():
+                flags[key].update({
+                    arguments: value
+                })
+
+        return flags
