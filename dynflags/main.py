@@ -171,15 +171,6 @@ class DynFlagManager:
             return True
         return False
 
-    def _merge_flags(self, flag_names):
-        new = {}
-
-        for flag_name in flag_names:
-            for k, v in flag_name.items():
-                new[k] = v
-
-        return new
-
     @write_only
     def _gen_attr_updates(self, flag_names, action):
         if action == 'REMOVE':
@@ -187,11 +178,10 @@ class DynFlagManager:
                 UpdateExpression='{} {}'.format(action, ','.join(f'flags.{flag_name}' for flag_name in flag_names)),
             )
 
-        new = self._merge_flags(flag_names)
         return dict(
-            UpdateExpression='{} {}'.format(action, ','.join(f'flags.#{k}=:{k}' for k in new)),
-            ExpressionAttributeNames={f'#{k}': k for k in new},
-            ExpressionAttributeValues={f':{k}': v for k, v in new.items()}
+            UpdateExpression='{} {}'.format(action, ','.join(f'flags.#{k}=:{k}' for k in flag_names)),
+            ExpressionAttributeNames={f'#{k}': k for k in flag_names},
+            ExpressionAttributeValues={f':{k}': v for k, v in flag_names.items()}
         )
 
     @write_only
@@ -209,7 +199,7 @@ class DynFlagManager:
             self.table.update_item(
                 Key=dynamo_key,
                 UpdateExpression='SET flags = :flags',
-                ExpressionAttributeValues={':flags': self._merge_flags(flag_names)}
+                ExpressionAttributeValues={':flags': flag_names}
             )
 
     def _merge(self, dict1, dict2):
@@ -218,9 +208,9 @@ class DynFlagManager:
 
     @write_only
     def add_flag(self, flag_name, enabled, arguments={}):
-        flag = {flag_name: enabled}
+        flag_names = {flag_name: enabled}
 
-        self.add_flags([flag], arguments=arguments)
+        self.add_flags(flag_names, arguments=arguments)
 
     @write_only
     def add_flags(self, flag_names, arguments={}):
