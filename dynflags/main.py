@@ -254,5 +254,6 @@ class DynFlagManager:
     def remove_flags(self, flag_names, arguments={}):
         self._manipulate_flags(flag_names, arguments, 'REMOVE')
 
-    def get_flags(self):
-        raise NotImplementedError()
+    def get_flags(self, key=None):
+        item = self.get_item_for_key(key)
+        return item['flags']
