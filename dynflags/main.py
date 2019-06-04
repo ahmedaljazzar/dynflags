@@ -165,10 +165,9 @@ class DynFlagManager:
 
     def _is_active(self, flag_name, arguments={}, use_cache=True):
         self._validate_flags({flag_name: True})
-        active_flags = self._get_flags_for_args(arguments, use_cache)
-        if flag_name in active_flags:
-            return True
-        return False
+        flags = self._get_flags_for_args(arguments, use_cache)
+
+        return flags.get(flag_name, False)
 
     @write_only
     def _gen_attr_updates(self, flag_names, action):
