@@ -229,8 +229,7 @@ class DynFlagManager:
                 Key=dynamo_key,
                 **self._gen_attr_updates(flags, action)
             )
-        except ClientError as e:
-            raise e
+        except ClientError:
             self.table.update_item(
                 Key=dynamo_key,
                 UpdateExpression='SET flags = :flags',
@@ -238,10 +237,10 @@ class DynFlagManager:
             )
 
     @write_only
-    def add_flag(self, name, enabled):
+    def add_flag(self, name, enabled, arguments={}):
         flag = {name: enabled}
 
-        self.add_flags([flag])
+        self.add_flags([flag], arguments=arguments)
 
     @write_only
     def add_flags(self, flag_names, arguments={}):
