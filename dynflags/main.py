@@ -256,8 +256,14 @@ class DynFlagManager:
             item = self.get_item_for_key(key)
             return item['flags']
         elif arguments:
+
+            default_item = self.get_item_for_key(DEFAULT_LIST_KEY)
+            default_flags = default_item['flags']
+
             item = self.get_item_for_args(arguments)
-            return item['flags']
+            item_flags = item['flags']
+
+            return self._merge(default_flags, item_flags)
 
         flags = {}
         response = self.table.scan()
@@ -266,3 +272,7 @@ class DynFlagManager:
             flags.update(item['flags'])
 
         return flags
+
+    def _merge(self, dict1, dict2):
+        res = {**dict1, **dict2}
+        return res
