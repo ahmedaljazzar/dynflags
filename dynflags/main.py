@@ -103,9 +103,9 @@ class DynFlagManager:
             raise InvalidArgumentValueTypeException(
                 'Argument values must be strings')
 
-    def _validate_flags(self, flags):
+    def _validate_flag_names(self, flag_names):
         return
-        if not all(isinstance(x, dict) for x in flags):
+        if not all(isinstance(x, dict) for x in flag_names):
             raise InvalidFlagNameTypeException('Flags must be dictionaries')
 
     def _validate_action_type(self, action):
@@ -184,31 +184,31 @@ class DynFlagManager:
         else:
             return self._is_active(*args, **kwargs)
 
-    def _is_active(self, flagname, arguments={}, use_cache=True):
+    def _is_active(self, flag_name, arguments={}, use_cache=True):
         # TODO: Edit to match the new logic
-        self._validate_flags([flagname])
+        self._validate_flag_names([flag_name])
         active_flags = self.get_flags_for_args(arguments, use_cache)
-        if flagname in active_flags:
+        if flag_name in active_flags:
             return True
         return False
 
-    def _merge_flags(self, flags):
+    def _merge_flags(self, flag_names):
         new = {}
 
-        for flag in flags:
-            for k, v in flag.items():
+        for flag_name in flag_names:
+            for k, v in flag_name.items():
                 new[k] = v
 
         return new
 
     @write_only
-    def _gen_attr_updates(self, flags, action):
+    def _gen_attr_updates(self, flag_names, action):
         if action == 'REMOVE':
             return dict(
-                UpdateExpression='{} {}'.format(action, ','.join(f'flags.{flag}' for flag in flags)),
+                UpdateExpression='{} {}'.format(action, ','.join(f'flags.{flag_name}' for flag_name in flag_names)),
             )
 
-        new = self._merge_flags(flags)
+        new = self._merge_flags(flag_names)
         return dict(
             UpdateExpression='{} {}'.format(action, ','.join(f'flags.#{k}=:{k}' for k in new)),
             ExpressionAttributeNames={f'#{k}': k for k in new},
@@ -216,26 +216,26 @@ class DynFlagManager:
         )
 
     @write_only
-    def _manipulate_flags(self, flags, arguments, action):
-        self._validate_flags(flags)
+    def _manipulate_flags(self, flag_names, arguments, action):
+        self._validate_flag_names(flag_names)
         key = self._gen_key_from_args(arguments)
         dynamo_key = self._gen_dynamo_key_from_key(key)
 
         try:
             self.table.update_item(
                 Key=dynamo_key,
-                **self._gen_attr_updates(flags, action)
+                **self._gen_attr_updates(flag_names, action)
             )
         except ClientError:
             self.table.update_item(
                 Key=dynamo_key,
                 UpdateExpression='SET flags = :flags',
-                ExpressionAttributeValues={':flags': self._merge_flags(flags)}
+                ExpressionAttributeValues={':flags': self._merge_flags(flag_names)}
             )
 
     @write_only
-    def add_flag(self, name, enabled, arguments={}):
-        flag = {name: enabled}
+    def add_flag(self, flag_name, enabled, arguments={}):
+        flag = {flag_name: enabled}
 
         self.add_flags([flag], arguments=arguments)
 
@@ -251,7 +251,7 @@ class DynFlagManager:
     def remove_flags(self, flag_names, arguments={}):
         self._manipulate_flags(flag_names, arguments, 'REMOVE')
 
-    def get_flags(self, key=None, arguments=None):
+    def get_flag_names(self, key=None, arguments=None):
         if key:
             item = self.get_item_for_key(key)
             return item['flags']
@@ -265,13 +265,12 @@ class DynFlagManager:
 
             return self._merge(default_flags, item_flags)
 
-        flags = {}
+        flag_names = {}
         response = self.table.scan()
         for item in response['Items']:
-            # item_flags = json.loads(item['flags'])
-            flags.update(item['flags'])
+            flag_names.update(item['flags'])
 
-        return flags
+        return flag_names
 
     def _merge(self, dict1, dict2):
         res = {**dict1, **dict2}

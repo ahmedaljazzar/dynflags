@@ -51,9 +51,9 @@ class TestGeneral(unittest.TestCase):
         mgr = dynflags.DynFlagManager('my-table')
         good_flags = ['flag-name', 'other-flag-name']
         bad_flags = ['flag-name', 1]
-        mgr._validate_flags(good_flags)
+        mgr._validate_flag_names(good_flags)
         self.assertRaises(dynflags.InvalidFlagNameTypeException,
-                          mgr._validate_flags, bad_flags)
+                          mgr._validate_flag_names, bad_flags)
 
 
 class TestReadOnly(unittest.TestCase):
