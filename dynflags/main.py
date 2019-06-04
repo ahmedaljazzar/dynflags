@@ -5,9 +5,6 @@ The core module of dynflags
 """
 from __future__ import print_function
 
-from datetime import datetime, timezone
-
-from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 from six import string_types
 
@@ -254,6 +251,18 @@ class DynFlagManager:
     def remove_flags(self, flag_names, arguments={}):
         self._manipulate_flags(flag_names, arguments, 'REMOVE')
 
-    def get_flags(self, key=None):
-        item = self.get_item_for_key(key)
-        return item['flags']
+    def get_flags(self, key=None, arguments=None):
+        if key:
+            item = self.get_item_for_key(key)
+            return item['flags']
+        elif arguments:
+            item = self.get_item_for_args(arguments)
+            return item['flags']
+
+        flags = {}
+        response = self.table.scan()
+        for item in response['Items']:
+            # item_flags = json.loads(item['flags'])
+            flags.update(item['flags'])
+
+        return flags
