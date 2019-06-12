@@ -12,3 +12,6 @@ class InvalidArgumentKeyTypeException(Exception):
 
 class InvalidArgumentValueTypeException(Exception):
     pass
+
+class InvalidFlagState(Exception):
+    pass

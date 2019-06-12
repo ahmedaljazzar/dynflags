@@ -1,14 +1,14 @@
 import boto3, dynflags, unittest
 import moto
 from moto import mock_dynamodb2
-from unittest import mock
+from unittest import mock, main
 
 
 class TestGeneral(unittest.TestCase):
     @mock_dynamodb2
     @mock.patch('dynflags.DynFlagManager._initialize_table')
     def test_autocreate_isnt_called(self, *args):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         self.assertRaises(
             mgr.dynamo.meta.client.exceptions.ResourceNotFoundException,
             getattr, mgr, 'table')
@@ -17,20 +17,20 @@ class TestGeneral(unittest.TestCase):
     @mock_dynamodb2
     @mock.patch('dynflags.DynFlagManager._initialize_table')
     def test_autocreate_is_called(self, *args):
-        mgr = dynflags.DynFlagManager('my-table', autocreate_table=True)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True })
         mgr.table  # just access the property
         self.assertTrue(mgr._initialize_table.called)
 
     @mock_dynamodb2
     def test_key_generation_and_reversal(self):
         args = {'a': '1', 'b': '2'}
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         key = mgr._gen_key_from_args(args)
         self.assertEqual(args, mgr._gen_args_from_key(key))
 
     @mock_dynamodb2
     def test_argument_key_validation(self):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         args = {'a': '1'}
         mgr._validate_arguments(args)  # accept string key
         args = {1: 'a'}
@@ -39,7 +39,7 @@ class TestGeneral(unittest.TestCase):
 
     @mock_dynamodb2
     def test_argument_value_validation(self):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         args = {'a': '1'}
         mgr._validate_arguments(args)  # accept string value
         args = {'a': 1}
@@ -48,7 +48,7 @@ class TestGeneral(unittest.TestCase):
 
     @mock_dynamodb2
     def test_flag_name_validation(self):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         good_flags = ['flag-name', 'other-flag-name']
         bad_flags = ['flag-name', 1]
         mgr._validate_flag_names(good_flags)
@@ -59,24 +59,24 @@ class TestGeneral(unittest.TestCase):
 class TestReadOnly(unittest.TestCase):
     @mock_dynamodb2
     def test_add_flag_raises_exception(self, *args):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         self.assertRaises(dynflags.ReadOnlyException, mgr.add_flag, 'my-flag')
 
     @mock_dynamodb2
     def test_add_flags_raises_exception(self, *args):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         self.assertRaises(dynflags.ReadOnlyException, mgr.add_flags,
                           ['my-flag'])
 
     @mock_dynamodb2
     def test_remove_flag_raises_exception(self, *args):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         self.assertRaises(dynflags.ReadOnlyException, mgr.remove_flag,
                           'my-flag')
 
     @mock_dynamodb2
     def test_remove_flags_raises_exception(self, *args):
-        mgr = dynflags.DynFlagManager('my-table')
+        mgr = dynflags.DynFlagManager()
         self.assertRaises(dynflags.ReadOnlyException, mgr.remove_flags,
                           ['my-flag'])
 
@@ -84,9 +84,8 @@ class TestReadOnly(unittest.TestCase):
 class TestReadWrite(unittest.TestCase):
     @mock_dynamodb2
     def test_single_global_flag(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
         flag_name = 'my-flag-1'
         self.assertFalse(mgr.is_active(flag_name))
         mgr.add_flag(flag_name)
@@ -94,9 +93,8 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_double_global_flag(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
         flag_names = ['my-flag-2', 'my-second-flag-1']
         for flag_name in flag_names:
             self.assertFalse(mgr.is_active(flag_name))
@@ -106,9 +104,8 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_single_keyed_flag(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
         flag_name = 'my-flag-3'
         args = {'mykey': 'myvalue'}
         self.assertFalse(mgr.is_active(flag_name))
@@ -119,9 +116,8 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_double_keyed_flag(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
         flag_names = ['my-flag-4', 'my-second-flag-2']
         args = {'mykey': 'myvalue'}
         for flag_name in flag_names:
@@ -134,9 +130,8 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_sequential_add(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
         flag_names = ['my-flag-5', 'my-second-flag-3']
         for flag_name in flag_names:
             self.assertFalse(mgr.is_active(flag_name))
@@ -147,10 +142,9 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_multiple_single_flag_edit_sequence(self, *args):
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      read_only=False)
-        flag_names = [str(x) for x in range(10)]
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'read_only': False })
+        flag_names = ['k%i' % x for x in range(10)]
         for flag_name in flag_names:
             self.assertFalse(mgr.is_active(flag_name))
 
@@ -181,13 +175,12 @@ class TestReadWrite(unittest.TestCase):
 
     @mock_dynamodb2
     def test_robust_read(self, *args):
-        mgr = dynflags.DynFlagManager('my-table', autocreate_table=True)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True })
         self.assertRaises(dynflags.InvalidFlagNameTypeException, mgr.is_active,
                           123)
 
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      robust=True)
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True,
+                                        'robust': True })
         mgr.is_active(123)
 
 
@@ -205,10 +198,12 @@ class TestCachedRead(unittest.TestCase):
 
         cache = TestCache()
 
-        mgr = dynflags.DynFlagManager('my-table',
-                                      autocreate_table=True,
-                                      cache=TestCache())
+        mgr = dynflags.DynFlagManager({ 'autocreate_table': True },
+                                        cache=TestCache())
         self.assertFalse(mgr.is_active('test'))
-        self.assertTrue('__global__' in cache.cache)
-        cache.cache['__global__'] = ['test']
+        self.assertTrue(mgr.config.default_key in cache.cache)
+        cache.cache[mgr.config.default_key] = {'test': True}
         self.assertTrue(mgr.is_active('test'))
+
+if __name__ == '__main__':
+    main()
